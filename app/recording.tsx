@@ -1,9 +1,6 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
-import { View, Text, Pressable, Alert, ActivityIndicator } from 'react-native';
-import { Audio, AVPlaybackStatus } from 'expo-av';
-import * as FileSystem from 'expo-file-system';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useReferenceContext } from '../contexts/AppContext';
+import React, { useState, useRef, useMemo, useCallback, memo } from 'react';
+import { View, Text, Pressable, TouchableOpacity } from 'react-native';
+import { useReferenceContext, useSetupContext } from '../contexts/AppContext';
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
 import { LiveRecordingWaveform } from '@/components/LiveRecordingWaveform';
@@ -89,6 +86,147 @@ const formatVerseReference = (selectedBook: string | null, selectedChapter: numb
   return `${chapterVerse}:${start}-${end}`;
 };
 
+const VerseRangeControl = () => {
+  const { state: { selectedBook, selectedChapter, verseRange }, setVerseRange } = useReferenceContext();
+  const router = useRouter();
+  const { state: { versificationSchema } } = useSetupContext();
+  const [isLongPressing, setIsLongPressing] = useState(false);
+  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const longPressStartTimeRef = useRef(0);
+
+  const maxVerse = versificationSchema?.maxVerses[selectedBook!]?.[selectedChapter! - 1] || 1;
+
+  const canExpand = useMemo(() => verseRange && verseRange[1] < maxVerse, [verseRange, maxVerse]);
+  const canShrink = useMemo(() => verseRange && verseRange[1] > verseRange[0], [verseRange]);
+  const canMovePrev = useMemo(() => verseRange && verseRange[0] > 1, [verseRange]);
+  const canMoveNext = useMemo(() => verseRange && verseRange[1] < maxVerse, [verseRange, maxVerse]);
+
+  const updateRange = useCallback((increment: boolean, amount: number) => {
+    if (verseRange) {
+      const [start, end] = verseRange;
+      const newEnd = increment
+        ? Math.min(end + amount, maxVerse)
+        : Math.max(end - amount, start);
+      if (newEnd !== end) {
+        setVerseRange([start, newEnd]);
+      }
+    }
+  }, [verseRange, setVerseRange, maxVerse]);
+
+  const handleLongPress = useCallback((increment: boolean) => {
+    const elapsedTime = (Date.now() - longPressStartTimeRef.current) / 1000;
+    const amount = Math.floor(Math.min(1 + elapsedTime * elapsedTime * 3, 200));
+    updateRange(increment, amount);
+  }, [updateRange]);
+
+  const startLongPress = useCallback((increment: boolean) => {
+    if ((increment && canExpand) || (!increment && canShrink)) {
+      setIsLongPressing(true);
+      longPressStartTimeRef.current = Date.now();
+      longPressTimerRef.current = setInterval(() => handleLongPress(increment), 50);
+    }
+  }, [handleLongPress, canExpand, canShrink]);
+
+  const endLongPress = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearInterval(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    setIsLongPressing(false);
+  }, []);
+
+
+  const handlePress = useCallback((increment: boolean) => {
+    if (!isLongPressing) {
+      updateRange(increment, 1);
+    }
+  }, [isLongPressing, updateRange]);
+
+  const moveToNextVerse = useCallback(() => {
+    if (canMoveNext) {
+      const [start, end] = verseRange!;
+      const newStart = end + 1;
+      setVerseRange([newStart, newStart]);
+    }
+  }, [verseRange, setVerseRange, maxVerse, canMoveNext]);
+
+  const moveToPreviousVerse = useCallback(() => {
+    if (canMovePrev) {
+      const [start, end] = verseRange!;
+      const newEnd = start - 1;
+      setVerseRange([newEnd, newEnd]);
+    }
+  }, [verseRange, setVerseRange, canMovePrev]);
+
+  return (
+    <View className="flex-row items-center justify-center">
+      <TouchableOpacity 
+        onPress={moveToPreviousVerse} 
+        className="p-2"
+        style={{ opacity: canMovePrev ? 1 : 0.5 }}
+        disabled={!canMovePrev}
+      >
+        <StyledIonicons name="chevron-back" size={24} className="text-blue-500" />
+      </TouchableOpacity>
+      <TouchableOpacity 
+        onLongPress={() => startLongPress(false)}
+        onPressOut={endLongPress}
+        onPress={() => handlePress(false)}
+        className="p-2"
+        style={{ opacity: canShrink ? 1 : 0.5 }}
+        disabled={!canShrink}
+      >
+        <StyledIonicons name="remove" size={24} className="text-blue-500" />
+      </TouchableOpacity>
+      <Pressable className="mx-2" onPress={() => router.push('/navigation')}>
+        <Text className="text-2xl font-bold">
+          {formatVerseReference(selectedBook, selectedChapter, verseRange)}
+        </Text>
+      </Pressable>
+      <TouchableOpacity 
+        onLongPress={() => startLongPress(true)}
+        onPressOut={endLongPress}
+        onPress={() => handlePress(true)}
+        className="p-2"
+        style={{ opacity: canExpand ? 1 : 0.5 }}
+        disabled={!canExpand}
+      >
+        <StyledIonicons name="add" size={24} className="text-blue-500" />
+      </TouchableOpacity>
+      <TouchableOpacity 
+        onPress={moveToNextVerse} 
+        className="p-2"
+        style={{ opacity: canMoveNext ? 1 : 0.5 }}
+        disabled={!canMoveNext}
+      >
+        <StyledIonicons name="chevron-forward" size={24} className="text-blue-500" />
+      </TouchableOpacity>
+    </View>
+  );
+};
+
+const useLongPress = (callback: () => void, ms = 100) => {
+  const intervalRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  const start = useCallback(() => {
+    if (intervalRef.current === null) {
+      intervalRef.current = setInterval(callback, ms);
+    }
+  }, [callback, ms]);
+
+  const stop = useCallback(() => {
+    if (intervalRef.current !== null) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  }, []);
+
+  return {
+    onPressIn: start,
+    onPressOut: stop,
+  };
+};
+
 export default function RecordingScreen() {
   const { state: { selectedBook, selectedChapter, verseRange } } = useReferenceContext();
   const router = useRouter();
@@ -111,11 +249,7 @@ export default function RecordingScreen() {
 
       <RecordingProvider>
         <View className="flex-1 justify-center items-center">
-          <Pressable className="my-5" onPress={() => router.push('/navigation')}>
-            <Text className="text-2xl font-bold">
-              {formatVerseReference(selectedBook, selectedChapter, verseRange)}
-            </Text>
-          </Pressable>
+          <VerseRangeControl />
           <SoundDisplay/>
         </View>
 
