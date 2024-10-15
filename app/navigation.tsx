@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, TouchableOpacity, FlatList, ActivityIndicator, ScrollView, Pressable } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useReferenceContext, useSetupContext } from '../components/AppContext';
+import { useReferenceContext, useSetupContext } from '../contexts/AppContext';
 import { Alert } from 'react-native';
 
 export default function Navigation() {

@@ -5,7 +5,6 @@ import { useLiveWaveformLevels } from '../hooks/useLiveWaveformLevels';
 import { LevelData } from '@/hooks/useRecordingLevels';
 
 const { width: screenWidth } = Dimensions.get('window');
-const BAR_COUNT = 60;
 const BAR_WIDTH = 4;
 const BAR_GAP = 2;
 const SILENCE_HEIGHT_RATIO = 1;
@@ -19,7 +18,7 @@ interface LiveRecordingWaveformProps {
 export const LiveRecordingWaveform: React.FC<LiveRecordingWaveformProps> = ({ 
   recordingLevels,
   height = 200,
-  barHeight = 1,
+  barHeight = 0.5,
 }) => {
   const displayLevels = useLiveWaveformLevels(recordingLevels);
   const barHeightMultiplier = barHeight;

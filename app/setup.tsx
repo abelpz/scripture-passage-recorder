@@ -3,7 +3,7 @@ import { View, Text, TextInput, FlatList, TouchableOpacity, Alert, KeyboardAvoid
 
 import {styled} from "nativewind"
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useReferenceContext, useSetupContext } from '../components/AppContext';
+import { useReferenceContext, useSetupContext } from '../contexts/AppContext';
 import { predefinedSchemas, versifications } from '../constants/versifications';
 import { getLanguages, Language } from '../constants/languages/languageUtils';
 import { useRouter } from 'expo-router';
@@ -11,7 +11,7 @@ import { useRouter } from 'expo-router';
 const StyledIonicons = styled(Ionicons);
 
 export default function Setup() {
-  const { state:setupState, setVersification, setVersificationSchema, checkSetupComplete, setLanguage } = useSetupContext();
+  const { state: setupState, setLanguage, setVersification, setVersificationSchema, checkSetupComplete } = useSetupContext();
   const { checkSelectionComplete } = useReferenceContext();
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);

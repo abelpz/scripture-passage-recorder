@@ -97,7 +97,7 @@ function referenceReducer(state: ReferenceState, action: ReferenceAction): Refer
 export const SetupProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [setupState, setupDispatch] = useReducer(setupReducer, initialSetupState);
 
-  const persistentSetupDispatch = (action: SetupAction) => {
+  const persistentSetupDispatch = useCallback((action: SetupAction) => {
     setupDispatch(action);
     switch (action.type) {
       case 'SET_LANGUAGE':
@@ -110,13 +110,14 @@ export const SetupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         AsyncStorage.setItem('versificationSchema', JSON.stringify(action.payload));
         break;
     }
-  };
+  }, []);
 
   useEffect(() => {
     const loadInitialState = async () => {
       try {
         const savedLanguage = await AsyncStorage.getItem('selectedLanguage');
         const savedVersification = await AsyncStorage.getItem('selectedVersification');
+        const savedVersificationSchema = await AsyncStorage.getItem('versificationSchema');
 
         if (savedLanguage) {
           setupDispatch({ type: 'SET_LANGUAGE', payload: JSON.parse(savedLanguage) });
@@ -124,9 +125,10 @@ export const SetupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (savedVersification) {
           setupDispatch({ type: 'SET_VERSIFICATION', payload: savedVersification });
         }
-
-        // Load versification schema
-        if (savedVersification) {
+        if (savedVersificationSchema) {
+          setupDispatch({ type: 'SET_VERSIFICATION_SCHEMA', payload: JSON.parse(savedVersificationSchema) });
+        } else if (savedVersification) {
+          // Load versification schema if it's not saved but versification is
           const schema = await loadVersificationSchema(savedVersification);
           if (schema) {
             setupDispatch({ type: 'SET_VERSIFICATION_SCHEMA', payload: schema });
@@ -315,12 +317,11 @@ export type ReferenceContextType = ReturnType<typeof useReferenceContext>;
 
 const loadVersificationSchema = async (file: string): Promise<VersificationSchema | null> => {
   try {
-      // Load predefined schemas
-      const schema = versifications[file as keyof typeof versifications];
-      if (schema) {
-        return schema;
-      }
-    
+    // Load predefined schemas
+    const schema = versifications[file as keyof typeof versifications];
+    if (schema) {
+      return schema;
+    }
   } catch (error) {
     console.error('Error loading versification schema:', error);
   }

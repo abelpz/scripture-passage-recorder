@@ -1,81 +1,69 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Audio } from 'expo-av';
 
-const UPDATE_INTERVAL = 50; // Update every 50ms for smoother animation
-const SILENCE_HEIGHT = 0;
 
 export interface LevelData {
   level: number;
   time: number;
 }
 
-export const useRecordingLevels = (
-  isRecording: boolean,
-  recording: Audio.Recording | null,
-  dramaticFactor: number = 2
-) => {
+export const useRecordingLevels = (recording: Audio.Recording | null, updateInterval: number = 100) => {
   const [levels, setLevels] = useState<LevelData[]>([]);
-  const animationRef = useRef<NodeJS.Timeout | null>(null);
-  const lastUpdateTime = useRef(0);
   const recordingStartTime = useRef(0);
-  const isRecordingRef = useRef(isRecording);
+  const levelBuffer = useRef<LevelData[]>([]);
+  const lastLevel = useRef(0);
+  const intervalsRef = useRef<{ update: NodeJS.Timeout | null; flush: NodeJS.Timeout | null }>({ update: null, flush: null });
 
   useEffect(() => {
-    isRecordingRef.current = isRecording;
-    if (isRecording) {
-      recordingStartTime.current = Date.now();
-      animateRecordingBars();
-    } else {
-      if (animationRef.current) {
-        clearTimeout(animationRef.current);
-      }
-    }
-    return () => {
-      if (animationRef.current) {
-        clearTimeout(animationRef.current);
-      }
-    };
-  }, [isRecording]);
-
-  const animateRecordingBars = async () => {
-    if (!isRecordingRef.current || !recording) {
-      if (animationRef.current) {
-        clearTimeout(animationRef.current);
-      }
+    if (!recording) {
+      setLevels([]);
+      levelBuffer.current = [];
+      lastLevel.current = 0;
       return;
     }
 
-    const currentTime = Date.now();
-    if (currentTime - lastUpdateTime.current >= UPDATE_INTERVAL) {
-      try {
-        const status = await recording.getStatusAsync();
-        if (status.canRecord) {
-          const metering = (status as any).metering ?? -160;
-          const normalizedMetering = Math.max(SILENCE_HEIGHT, Math.min(1, (metering + 160) / 160));
-          
-          const dramaticMetering = Math.pow(normalizedMetering, dramaticFactor);
-          const timeInMillis = currentTime - recordingStartTime.current;
+    const SILENCE_HEIGHT = 0;
+    const NOISE_GATE = -50;
+    recordingStartTime.current = Date.now();
 
-          setLevels(prevLevels => [...prevLevels, { level: dramaticMetering, time: timeInMillis }]);
+    const updateLevels = async () => {
+      const status = await recording.getStatusAsync();
+      if (status.isRecording) {
+        const { metering = -160 } = status;
 
-          lastUpdateTime.current = currentTime;
-        }
-      } catch (error) {
-        console.warn('Error getting recording status:', error);
-        // If there's an error, we'll stop trying to animate
-        if (animationRef.current) {
-          clearTimeout(animationRef.current);
-        }
-        return;
+
+        let normalizedMetering = Math.max(SILENCE_HEIGHT, Math.min(1, (metering + 160) / 160));
+        lastLevel.current = normalizedMetering;
+
+        levelBuffer.current.push({ 
+          level: normalizedMetering, 
+          time: Date.now() - recordingStartTime.current 
+        });
+      } else {
+        clearIntervals();
       }
-    }
+    };
 
-    animationRef.current = setTimeout(animateRecordingBars, 16);
-  };
+    const flushLevels = () => {
+      if (levelBuffer.current.length > 0) {
+        setLevels(prevLevels => [...prevLevels, ...levelBuffer.current]);
+        levelBuffer.current = [];
+      }
+    };
 
-  const resetLevels = useCallback(() => {
-    setLevels([]);
-  }, []);
+    const clearIntervals = () => {
+      if (intervalsRef.current.update) clearInterval(intervalsRef.current.update);
+      if (intervalsRef.current.flush) clearInterval(intervalsRef.current.flush);
+      intervalsRef.current = { update: null, flush: null };
+    };
 
-  return { levels, resetLevels };
+    intervalsRef.current.update = setInterval(updateLevels, 100); // Update more frequently
+    intervalsRef.current.flush = setInterval(flushLevels, updateInterval); // Flush less frequently
+
+    return clearIntervals;
+  }, [recording, updateInterval]);
+
+  const memoizedLevels = useMemo(() => levels, [levels]);
+
+  return memoizedLevels;
 };

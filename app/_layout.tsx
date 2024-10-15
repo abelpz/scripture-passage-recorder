@@ -4,7 +4,7 @@ import { useFonts } from 'expo-font';
 import { SplashScreen, Stack } from 'expo-router';
 import { useEffect } from 'react';
 import { useColorScheme } from 'react-native';
-import { AppProvider } from '../components/AppContext';
+import { AppProvider } from '../contexts/AppContext';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -45,6 +45,7 @@ function RootLayoutNav() {
     <AppProvider>
       <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
         <Stack>
+          <Stack.Screen name="index" options={{ headerShown: false }} />
           <Stack.Screen name="setup" options={{ headerShown: false }} />
         </Stack>
       </ThemeProvider>

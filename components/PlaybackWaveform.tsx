@@ -1,12 +1,12 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, LayoutChangeEvent, Dimensions, TouchableWithoutFeedback } from 'react-native';
+import React, { useCallback, useMemo, memo } from 'react';
+import { View, LayoutChangeEvent, TouchableWithoutFeedback } from 'react-native';
 import Svg, { Rect, Line } from 'react-native-svg';
-import { Audio, AVPlaybackStatus } from 'expo-av';
+import { useRecording } from '@/contexts/RecordingContext';
 
-const BAR_WIDTH = 2;
-const BAR_GAP = 1;
-const SILENCE_HEIGHT_RATIO = 0.1;
-const UPDATE_INTERVAL = 50; // 50ms update interval
+const BAR_WIDTH = 4;
+const BAR_GAP = 2;
+const SILENCE_HEIGHT_RATIO = 1;
+const DISPLAY_BAR_COUNT = 60;
 
 interface LevelData {
   level: number;
@@ -14,87 +14,94 @@ interface LevelData {
 }
 
 interface PlaybackWaveformProps {
-  sound: Audio.Sound;
-  isPlaying: boolean;
   height?: number;
   levels: LevelData[];
-  onSeek?: (position: number) => void;
 }
 
-export const PlaybackWaveform: React.FC<PlaybackWaveformProps> = ({ 
-  sound,
-  isPlaying,
+const processLevels = (levels: LevelData[] | null, targetCount: number): LevelData[] => {
+  if (!levels || levels.length === 0) return [];
+  if (levels.length === targetCount) return levels;
+
+  const result: LevelData[] = [];
+  const step = (levels.length - 1) / (targetCount - 1);
+
+  if (levels.length > targetCount) {
+    for (let i = 0; i < targetCount; i++) {
+      const startIndex = Math.floor(i * step);
+      const endIndex = Math.floor((i + 1) * step);
+      
+      let sum = 0;
+      let count = 0;
+      let lastTime = 0;
+
+      for (let j = startIndex; j < endIndex && j < levels.
+      length; j++) {
+        sum += levels[j].level;
+        count++;
+        lastTime = levels[j].time;
+      }
+
+      result.push({
+        level: count > 0 ? sum / count : 0,
+        time: lastTime
+      });
+    }
+
+    return result;
+  }
+
+  // Interpolation for when levels.length < targetCount
+  for (let i = 0; i < targetCount; i++) {
+    const position = i * step;
+    const lowerIndex = Math.floor(position);
+    const upperIndex = Math.min(Math.ceil(position), levels.length - 1);
+    
+    if (lowerIndex === upperIndex) {
+      result.push(levels[lowerIndex]);
+    } else {
+      const fraction = position - lowerIndex;
+      const lowerLevel = levels[lowerIndex]?.level ?? 0;
+      const upperLevel = levels[upperIndex]?.level ?? 0;
+      const interpolatedLevel = lowerLevel + (upperLevel - lowerLevel) * fraction;
+      
+      const lowerTime = levels[lowerIndex]?.time ?? 0;
+      const upperTime = levels[upperIndex]?.time ?? 0;
+      const interpolatedTime = lowerTime + (upperTime - lowerTime) * fraction;
+
+      result.push({
+        level: interpolatedLevel,
+        time: interpolatedTime
+      });
+    }
+  }
+
+  return result;
+};
+
+const SILENCE_HEIGHT = BAR_WIDTH * SILENCE_HEIGHT_RATIO;
+
+export const PlaybackWaveform: React.FC<PlaybackWaveformProps> = memo(({ 
   height = 200,
   levels,
-  onSeek
 }) => {
-  const [playbackPosition, setPlaybackPosition] = useState(0);
-  const [containerWidth, setContainerWidth] = useState(0);
-  const soundRef = useRef<Audio.Sound | null>(null);
+  const { sound, seek } = useRecording();
+  const [containerWidth, setContainerWidth] = React.useState(0);
+  const [playbackPosition, setPlaybackPosition] = React.useState(0);
 
-  useEffect(() => {
-    loadSound();
-    return () => {
-      if (soundRef.current) {
-        soundRef.current.unloadAsync().catch(error => {
-          console.error('Error unloading sound in cleanup:', error);
-        });
-      }
-    };
-  }, [sound]);
+  
 
-  useEffect(() => {
-    if (isPlaying && soundRef.current) {
-      soundRef.current.playAsync().catch(error => {
-        console.error('Error playing sound:', error);
-      });
-    } else if (soundRef.current) {
-      soundRef.current.pauseAsync().catch(error => {
-        console.error('Error pausing sound:', error);
-      });
-    }
-  }, [isPlaying]);
-
-  const loadSound = async () => {
-    if (soundRef.current) {
-      try {
-        await soundRef.current.unloadAsync();
-      } catch (error) {
-        console.error('Error unloading previous sound:', error);
-      }
-    }
-
-    try {
-      const status = await sound.getStatusAsync();
-      if (!status.isLoaded) {
-        console.error('Sound is not loaded');
-        return;
-      }
-
-      soundRef.current = sound;
-      sound.setOnPlaybackStatusUpdate(onPlaybackStatusUpdate);
-    } catch (error) {
-      console.error('Error loading sound:', error);
-    }
-  };
-
-  const onPlaybackStatusUpdate = (status: AVPlaybackStatus) => {
-    if (status.isLoaded && status.durationMillis) {
-      const { positionMillis, durationMillis } = status;
-      const progress = positionMillis / durationMillis;
-      setPlaybackPosition(progress);
-    }
-  };
-
-  useEffect(() => {
+  React.useEffect(() => {
     if (sound) {
-      sound.setOnPlaybackStatusUpdate(onPlaybackStatusUpdate);
+      const updatePlaybackPosition = async () => {
+        const status = await sound.getStatusAsync();
+        if (status.isLoaded && status.durationMillis) {
+          setPlaybackPosition(status.positionMillis / status.durationMillis);
+        }
+      };
+
+      const interval = setInterval(updatePlaybackPosition, 50);
+      return () => clearInterval(interval);
     }
-    return () => {
-      if (sound) {
-        sound.setOnPlaybackStatusUpdate(null);
-      }
-    };
   }, [sound]);
 
   const onLayout = useCallback((event: LayoutChangeEvent) => {
@@ -103,26 +110,28 @@ export const PlaybackWaveform: React.FC<PlaybackWaveformProps> = ({
   }, []);
 
   const handlePress = (event: any) => {
-    if (!levels?.length || !onSeek || !sound) return;
+    if (!levels?.length || !seek || !sound) return;
 
     const { locationX } = event.nativeEvent;
     const progress = locationX / containerWidth;
     const totalDuration = levels[levels.length - 1].time;
     const seekTime = progress * totalDuration;
 
-    onSeek(seekTime);
+    seek(seekTime);
   };
 
-  const silenceHeight = BAR_WIDTH * SILENCE_HEIGHT_RATIO;
+  const memoizedDisplayLevels = useMemo(() => processLevels(levels, DISPLAY_BAR_COUNT), [levels]);
 
   return (
     <TouchableWithoutFeedback onPress={handlePress}>
       <View className="flex-1 w-full" onLayout={onLayout}>
         {containerWidth > 0 && (
           <Svg width={containerWidth} height={height} viewBox={`0 0 ${containerWidth} ${height}`}>
-            {levels.map((levelData, index) => {
-              const x = (index / levels.length) * containerWidth;
-              const barHeight = Math.max(levelData.level * (height * 0.8), silenceHeight);
+            {memoizedDisplayLevels.map((levelData, index) => {
+              const totalBarWidth = BAR_WIDTH + BAR_GAP;
+              const availableWidth = containerWidth - BAR_GAP; // Subtract one gap to ensure last bar aligns with right edge
+              const x = (index / (DISPLAY_BAR_COUNT - 1)) * (availableWidth - BAR_WIDTH);
+              const barHeight = Math.max(levelData.level * (height * 0.8), SILENCE_HEIGHT);
               const y = height / 2 - barHeight / 2;
               
               return (
@@ -151,4 +160,7 @@ export const PlaybackWaveform: React.FC<PlaybackWaveformProps> = ({
       </View>
     </TouchableWithoutFeedback>
   );
-};
+});
+
+// Add a display name for easier debugging
+PlaybackWaveform.displayName = 'PlaybackWaveform';

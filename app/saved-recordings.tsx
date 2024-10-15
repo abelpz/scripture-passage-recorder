@@ -1,20 +1,24 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Alert, Modal, Pressable } from 'react-native';
+import { View, Text, FlatList, Pressable, Alert, Modal, SectionList } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { Audio, AVPlaybackStatus } from 'expo-av';
 import Slider from '@react-native-community/slider';
-import { useSetupContext } from '../components/AppContext';
+import { useSetupContext } from '../contexts/AppContext';
+import { styled } from 'nativewind';
+
+const StyledIonicons = styled(Ionicons)
 
 type FilterType = 'language' | 'book' | 'chapter';
 
-const FilterModal = ({ visible, onClose, options, onSelect, title }: {
+const FilterModal = ({ visible, onClose, options, onSelect, onClear, title }: {
   visible: boolean;
   onClose: () => void;
   options: string[];
   onSelect: (option: string) => void;
+  onClear: () => void;
   title: string;
 }) => (
   <Modal
@@ -23,24 +27,32 @@ const FilterModal = ({ visible, onClose, options, onSelect, title }: {
     visible={visible}
     onRequestClose={onClose}
   >
-    <TouchableOpacity
+    <Pressable
       style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}
-      activeOpacity={1}
       onPress={onClose}
     >
       <View style={{ flex: 1, justifyContent: 'flex-end' }}>
-        <TouchableOpacity activeOpacity={1}>
+        <Pressable>
           <View className="bg-white rounded-t-3xl p-4">
             <View className="flex-row justify-between items-center mb-4">
               <Text className="text-xl font-bold">{title}</Text>
-              <TouchableOpacity onPress={onClose}>
+              <Pressable onPress={onClose}>
                 <Ionicons name="close" size={24} color="black" />
-              </TouchableOpacity>
+              </Pressable>
             </View>
+            <Pressable
+              className="py-3 border-b border-gray-200"
+              onPress={() => {
+                onClear();
+                onClose();
+              }}
+            >
+              <Text className="text-lg text-red-500">Clear Selection</Text>
+            </Pressable>
             <FlatList
               data={options}
               renderItem={({ item }) => (
-                <TouchableOpacity
+                <Pressable
                   className="py-3 border-b border-gray-200"
                   onPress={() => {
                     onSelect(item);
@@ -48,16 +60,28 @@ const FilterModal = ({ visible, onClose, options, onSelect, title }: {
                   }}
                 >
                   <Text className="text-lg">{item}</Text>
-                </TouchableOpacity>
+                </Pressable>
               )}
               keyExtractor={(item) => item}
             />
           </View>
-        </TouchableOpacity>
+        </Pressable>
       </View>
-    </TouchableOpacity>
+    </Pressable>
   </Modal>
 );
+
+type Recording = {
+  filePath: string;
+  fileName: string;
+  date: Date;
+  duration: number;
+};
+
+type Section = {
+  title: string;
+  data: Recording[];
+};
 
 export default function SavedRecordings() {
   const {state} = useSetupContext();
@@ -78,6 +102,7 @@ export default function SavedRecordings() {
   const [playingFile, setPlayingFile] = useState<string | null>(null);
   const [playbackPosition, setPlaybackPosition] = useState(0);
   const playbackUpdateInterval = React.useRef<NodeJS.Timeout | null>(null);
+  const [sections, setSections] = useState<Section[]>([]);
 
   useEffect(() => {
     loadRecordings();
@@ -97,7 +122,35 @@ export default function SavedRecordings() {
       );
     });
 
-    setRecordings(filteredRecordings);
+    // Group recordings by date
+    const groupedRecordings: { [key: string]: Recording[] } = {};
+    for (const filePath of filteredRecordings) {
+      const fileInfo = await FileSystem.getInfoAsync(filePath);
+      const fileName = filePath.split('/').pop() || '';
+      const date = fileInfo.exists ? new Date(fileInfo.modificationTime * 1000) : new Date();
+      const dateKey = formatDate(date, 'dd/MM/yyyy');
+      const { sound } = await Audio.Sound.createAsync({ uri: filePath });
+      const status = await sound.getStatusAsync();
+      const duration = status.isLoaded ? status.durationMillis ?? 0 : 0;
+      await sound.unloadAsync();
+
+      if (!groupedRecordings[dateKey]) {
+        groupedRecordings[dateKey] = [];
+      }
+      groupedRecordings[dateKey].push({ filePath, fileName, date, duration });
+    }
+
+    // Convert grouped recordings to sections
+    const newSections: Section[] = Object.entries(groupedRecordings).map(([date, recordings]) => ({
+      title: date, // This is now in 'dd/MM/yyyy' format
+      data: recordings.sort((a, b) => b.date.getTime() - a.date.getTime()),
+    })).sort((a, b) => {
+      const [aDay, aMonth, aYear] = a.title.split('/').map(Number);
+      const [bDay, bMonth, bYear] = b.title.split('/').map(Number);
+      return new Date(bYear, bMonth - 1, bDay).getTime() - new Date(aYear, aMonth - 1, aDay).getTime();
+    });
+
+    setSections(newSections);
 
     // Update available options
     const uniqueLanguages = [...new Set(allRecordings.map(r => r.split('/').slice(-4, -3)[0]))];
@@ -189,7 +242,15 @@ export default function SavedRecordings() {
 
   const playRecording = async (filePath: string) => {
     if (sound) {
-      await sound.unloadAsync();
+      const soundStatus = await sound.getStatusAsync();
+      if(soundStatus.isLoaded && soundStatus.isPlaying){
+        await sound.pauseAsync();
+        return;
+      }
+      if(soundStatus.isLoaded && !soundStatus.isPlaying){
+        await sound.playAsync();
+        return;
+      }
     }
     const { sound: newSound } = await Audio.Sound.createAsync(
       { uri: filePath },
@@ -248,44 +309,60 @@ export default function SavedRecordings() {
       : undefined;
   }, [sound]);
 
-  const renderItem = ({ item }: { item: string }) => {
-    const fileName = item.split('/').pop();
-    const isCurrentlyPlaying = playingFile === item;
+  const formatDate = (date: Date, format: string): string => {
+    const pad = (num: number) => num.toString().padStart(2, '0');
+    
+    return format.replace(/dd|MM|yyyy/g, (match) => {
+      switch (match) {
+        case 'dd': return pad(date.getDate());
+        case 'MM': return pad(date.getMonth() + 1);
+        case 'yyyy': return date.getFullYear().toString();
+        default: return match;
+      }
+    });
+  };
+
+  const formatDuration = (milliseconds: number) => {
+    const totalSeconds = Math.floor(milliseconds / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
+
+  const renderItem = ({ item }: { item: Recording }) => {
+    const isCurrentlyPlaying = playingFile === item.filePath;
 
     return (
-      <View className="bg-white rounded-lg p-4 mb-2">
-        <Text className="text-base mb-2">{fileName}</Text>
-        <View className="flex-row justify-between items-center">
-          {isCurrentlyPlaying && isPlaying ? (
-            <>
-              <TouchableOpacity onPress={pauseRecording} className="mr-4">
-                <Ionicons name="pause" size={24} color="#007AFF" />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={stopRecording} className="mr-4">
-                <Ionicons name="stop" size={24} color="#FF3B30" />
-              </TouchableOpacity>
-            </>
-          ) : (
-            <TouchableOpacity onPress={() => playRecording(item)} className="mr-4">
-              <Ionicons name="play" size={24} color="#007AFF" />
-            </TouchableOpacity>
-          )}
-          <TouchableOpacity onPress={() => shareRecording(item)}>
-            <Ionicons name="share-outline" size={24} color="#4CD964" />
-          </TouchableOpacity>
+      <View className="bg-white rounded-lg p-4 mb-2 ">
+        <View className="flex-row items-center">
+          <Pressable onPress={() => playRecording(item.filePath)} className="mr-4">
+            <Ionicons name={isCurrentlyPlaying && isPlaying ? "pause" : "play"} size={24} color="#007AFF" />
+          </Pressable>
+          <View className="flex-1">
+            <Text className="text-base font-semibold">{item.fileName}</Text>
+            <Text className="text-sm text-gray-500">
+              {formatDate(item.date, 'dd/MM/yyyy')} • {formatDuration(item.duration)}
+            </Text>
+          </View>
+          <Pressable onPress={() => shareRecording(item.filePath)} className="ml-2">
+            <Ionicons name="share-outline" size={24} color="gray" />
+          </Pressable>
         </View>
-        {isCurrentlyPlaying && (
-          <Slider
-            style={{ width: '100%', height: 40 }}
-            minimumValue={0}
-            maximumValue={duration}
-            value={playbackPosition}
-            onSlidingComplete={seekRecording}
-            minimumTrackTintColor="#007AFF"
-            maximumTrackTintColor="#000000"
-          />
-        )}
+        <View className="w-full">
+          {isCurrentlyPlaying && (
+            <Slider
+              style={{ width: '100%', height: 40 }}
+              minimumValue={0}
+              maximumValue={duration}
+              value={playbackPosition}
+              onSlidingComplete={seekRecording}
+              minimumTrackTintColor="#007AFF"
+              maximumTrackTintColor="#000000"
+            />
+          )}
+        </View>
       </View>
+      
     );
   };
 
@@ -303,12 +380,9 @@ export default function SavedRecordings() {
     switch (currentFilter) {
       case 'language':
         setSelectedLanguage(option);
-        setSelectedBook('');
-        setSelectedChapter('');
         break;
       case 'book':
         setSelectedBook(option);
-        setSelectedChapter('');
         break;
       case 'chapter':
         setSelectedChapter(option);
@@ -316,43 +390,81 @@ export default function SavedRecordings() {
     }
   };
 
+  const clearFilter = (filterType: FilterType) => {
+    switch (filterType) {
+      case 'language':
+        setSelectedLanguage('');
+        setSelectedBook('');
+        setSelectedChapter('');
+        break;
+      case 'book':
+        setSelectedBook('');
+        setSelectedChapter('');
+        break;
+      case 'chapter':
+        setSelectedChapter('');
+        break;
+    }
+  };
+
   const renderFilterButton = (icon: string, filterType: FilterType, selectedItem: string) => (
-    <TouchableOpacity
-      className={`flex-row items-center bg-gray-200 rounded-full p-2 mr-2 ${selectedItem ? 'bg-blue-100' : ''}`}
-      onPress={() => openFilterModal(filterType)}
-    >
-      <Ionicons name={icon as any} size={24} color={selectedItem ? "#007AFF" : "#000"} />
-      {selectedItem ? <Text className="ml-2 text-sm text-blue-500">{selectedItem}</Text> : null}
-    </TouchableOpacity>
+    <View className={`flex-row items-center bg-gray-200 rounded-full  ${selectedItem ? 'bg-blue-100' : ''} mr-1 mb-2`}>
+      <Pressable
+      className="flex-row items-center p-2"
+        onPress={() => openFilterModal(filterType)}
+      >
+        <Ionicons name={icon as any} size={24} color={selectedItem ? "#007AFF" : "#000"} />
+        {selectedItem ? <Text className="ml-2 text-blue-500">{selectedItem}</Text> : null}
+      </Pressable>
+      {selectedItem && (
+        <Pressable
+          className="ml-1 rounded-full p-2"
+          onPress={() => clearFilter(filterType)}
+        >
+          <StyledIonicons name="close-circle" size={24} className='text-red-400' />
+        </Pressable>
+      )}
+    </View>
   );
 
+
   return (
-    <View className="flex-1 p-8 py-14 bg-white">
+    <View className={`flex-1 p-4 bg-gray-100`}>
       <Stack.Screen
         options={{
           title: '',
           headerStyle: { backgroundColor: '#187dd9' },
           headerTintColor: '#fff',
           headerTitleAlign: 'center',
-          headerRight: () => <Pressable onPress={() => router.push('/setup')}>
-            <Ionicons name="settings-outline" size={24} color="white" />
-          </Pressable>
+          headerRight: () => (
+            <View className="flex-row items-center">
+              <Pressable onPress={() => router.push('/setup')}>
+                <Ionicons name="settings-outline" size={24} color="white" />
+              </Pressable>
+            </View>
+          ),
         }}
       />
+      
 
-      <View className="flex-row mb-4">
+      <View className="flex-row mb-2 flex-wrap">
         {renderFilterButton("language", "language", selectedLanguage)}
         {selectedLanguage && renderFilterButton("book", "book", selectedBook)}
         {selectedBook && renderFilterButton("bookmark", "chapter", selectedChapter)}
       </View>
 
-      {recordings.length === 0 ? (
-        <Text className="text-center text-base text-gray-500">No recordings found</Text>
+      {sections.length === 0 ? (
+        <View className="flex-1 justify-center items-center">
+          <Text className="text-center text-base text-gray-500">No recordings found</Text>
+        </View>
       ) : (
-        <FlatList
-          data={recordings}
+        <SectionList
+          sections={sections}
           renderItem={renderItem}
-          keyExtractor={(item) => item}
+          renderSectionHeader={({ section: { title } }) => (
+            <Text className="p-2 rounded-t-lg mt-4">{title}</Text>
+          )}
+          keyExtractor={(item) => item.filePath}
           className="flex-1"
         />
       )}
@@ -362,6 +474,7 @@ export default function SavedRecordings() {
         onClose={closeFilterModal}
         options={currentFilter === 'language' ? languages : currentFilter === 'book' ? books : chapters}
         onSelect={selectFilterOption}
+        onClear={() => currentFilter ? clearFilter(currentFilter) : null}
         title={`Select ${currentFilter}`}
       />
     </View>

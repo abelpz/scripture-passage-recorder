@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Href, Redirect } from 'expo-router';
 import { View, ActivityIndicator } from 'react-native';
-import { useReferenceContext, useSetupContext } from '../components/AppContext';
+import { useReferenceContext, useSetupContext } from '../contexts/AppContext';
 
 export default function Index() {
   const [redirectTo, setRedirectTo] = useState<Href | null>(null);
