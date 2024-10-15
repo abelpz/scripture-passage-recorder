@@ -159,10 +159,18 @@ const VerseRangeControl = () => {
   }, [verseRange, setVerseRange, canMovePrev]);
 
   return (
+    <>
     <View className="flex-row items-center justify-center">
+     <Pressable className="mx-2" onPress={() => router.push('/navigation')}>
+        <Text className="text-2xl font-bold">
+          {formatVerseReference(selectedBook, selectedChapter, verseRange)}
+        </Text>
+      </Pressable>
+    </View>
+    <View className="flex-row items-center justify-center p-8 gap-4">
       <TouchableOpacity 
         onPress={moveToPreviousVerse} 
-        className="p-2"
+        className="p-4 rounded-full self-center bg-gray-100"
         style={{ opacity: canMovePrev ? 1 : 0.5 }}
         disabled={!canMovePrev}
       >
@@ -172,22 +180,18 @@ const VerseRangeControl = () => {
         onLongPress={() => startLongPress(false)}
         onPressOut={endLongPress}
         onPress={() => handlePress(false)}
-        className="p-2"
+        className="p-4 rounded-full self-center bg-gray-100"
         style={{ opacity: canShrink ? 1 : 0.5 }}
         disabled={!canShrink}
       >
         <StyledIonicons name="remove" size={24} className="text-blue-500" />
       </TouchableOpacity>
-      <Pressable className="mx-2" onPress={() => router.push('/navigation')}>
-        <Text className="text-2xl font-bold">
-          {formatVerseReference(selectedBook, selectedChapter, verseRange)}
-        </Text>
-      </Pressable>
+     
       <TouchableOpacity 
         onLongPress={() => startLongPress(true)}
         onPressOut={endLongPress}
         onPress={() => handlePress(true)}
-        className="p-2"
+        className="p-4 rounded-full self-center bg-gray-100"
         style={{ opacity: canExpand ? 1 : 0.5 }}
         disabled={!canExpand}
       >
@@ -195,13 +199,14 @@ const VerseRangeControl = () => {
       </TouchableOpacity>
       <TouchableOpacity 
         onPress={moveToNextVerse} 
-        className="p-2"
+        className="p-4 rounded-full self-center bg-gray-100"
         style={{ opacity: canMoveNext ? 1 : 0.5 }}
         disabled={!canMoveNext}
       >
         <StyledIonicons name="chevron-forward" size={24} className="text-blue-500" />
       </TouchableOpacity>
     </View>
+    </>
   );
 };
 
