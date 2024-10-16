@@ -203,29 +203,6 @@ export default function SavedRecordings() {
     }
   };
 
-  const downloadRecording = async (filePath: string) => {
-    try {
-      const fileInfo = await FileSystem.getInfoAsync(filePath);
-      if (!fileInfo.exists) {
-        throw new Error(`Source file does not exist: ${filePath}`);
-      }
-
-      const fileName = filePath.split('/').pop();
-      const destinationUri = `${FileSystem.documentDirectory}${fileName}`;
-
-      await FileSystem.copyAsync({
-        from: filePath,
-        to: destinationUri
-      });
-
-      Alert.alert('Success', `Recording saved to ${destinationUri}`);
-    } catch (error) {
-      console.error('Error downloading recording:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-      Alert.alert('Error', `Failed to save the recording: ${errorMessage}`);
-    }
-  };
-
   const shareRecording = async (filePath: string) => {
     try {
       const isAvailable = await Sharing.isAvailableAsync();
@@ -243,15 +220,23 @@ export default function SavedRecordings() {
   const playRecording = async (filePath: string) => {
     if (sound) {
       const soundStatus = await sound.getStatusAsync();
-      if(soundStatus.isLoaded && soundStatus.isPlaying){
-        await sound.pauseAsync();
-        return;
-      }
-      if(soundStatus.isLoaded && !soundStatus.isPlaying){
-        await sound.playAsync();
-        return;
+      if (soundStatus.isLoaded) {
+        if (filePath === playingFile) {
+          // Toggle play/pause for the current sound
+          if (soundStatus.isPlaying) {
+            await sound.pauseAsync();
+          } else {
+            await sound.playAsync();
+          }
+          return;
+        } else {
+          // Unload the current sound before creating a new one
+          await sound.unloadAsync();
+        }
       }
     }
+
+    // Create and play the new sound
     const { sound: newSound } = await Audio.Sound.createAsync(
       { uri: filePath },
       { progressUpdateIntervalMillis: 100 },

@@ -54,7 +54,7 @@ const RecordingControlPanel = () => {
           <Pressable onPress={playRecording} className="p-4 rounded-full self-center bg-blue-500">
             <StyledIonicons name="play" size={32} color="white" />
           </Pressable>
-          <Pressable onPress={() => saveRecording(() => router.push("./navigation"))}>
+          <Pressable onPress={() => saveRecording()}>
             <StyledIonicons name="checkmark-sharp" size={48} className="text-green-500" />
           </Pressable>
         </>
