@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, FlatList, Pressable, Alert, Modal, SectionList } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, FlatList, Pressable, Alert, Modal, SectionList, ActivityIndicator } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Sharing from 'expo-sharing';
@@ -7,11 +7,14 @@ import { Audio, AVPlaybackStatus } from 'expo-av';
 import Slider from '@react-native-community/slider';
 import { useSetupContext } from '../contexts/AppContext';
 import { styled } from 'nativewind';
-import { useRecordings, Recording } from '../contexts/RecordingsContext';
+import { useRecordings, Section, Recording } from '../contexts/RecordingsContext';
+import RecordingItem from './components/RecordingItem';
 
 const StyledIonicons = styled(Ionicons)
 
 type FilterType = 'language' | 'book' | 'chapter';
+
+type SortOrder = 'recent' | 'old';
 
 const FilterModal = ({ visible, onClose, options, onSelect, onClear, title }: {
   visible: boolean;
@@ -72,7 +75,7 @@ const FilterModal = ({ visible, onClose, options, onSelect, onClear, title }: {
 );
 
 export default function SavedRecordings() {
-  const { sections, languages, books, chapters, loadRecordings } = useRecordings();
+  const { sections, languages, books, chapters, loadRecordings, isLoading } = useRecordings();
   const { state } = useSetupContext();
   const { selectedLanguage: contextLanguage } = state;
   const [selectedLanguage, setSelectedLanguage] = useState<string>(contextLanguage?.lc || "");
@@ -81,15 +84,14 @@ export default function SavedRecordings() {
   const [modalVisible, setModalVisible] = useState(false);
   const [currentFilter, setCurrentFilter] = useState<FilterType | null>(null);
   const router = useRouter();
-  const [sound, setSound] = useState<Audio.Sound | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [duration, setDuration] = useState(0);
-  const [playingFile, setPlayingFile] = useState<string | null>(null);
-  const [playbackPosition, setPlaybackPosition] = useState(0);
+  const [currentlyPlayingId, setCurrentlyPlayingId] = useState<string | null>(null);
+  const [sortOrder, setSortOrder] = useState<SortOrder>('old');
 
   useEffect(() => {
     loadRecordings(selectedLanguage, selectedBook, selectedChapter);
   }, [selectedLanguage, selectedBook, selectedChapter]);
+
+  console.log("RENDERING SAVED RECORDINGS");
 
   const shareRecording = async (filePath: string) => {
     try {
@@ -105,132 +107,13 @@ export default function SavedRecordings() {
     }
   };
 
-  const playRecording = async (filePath: string) => {
-    if (sound) {
-      const soundStatus = await sound.getStatusAsync();
-      if (soundStatus.isLoaded) {
-        if (filePath === playingFile) {
-          // Toggle play/pause for the current sound
-          if (soundStatus.isPlaying) {
-            await sound.pauseAsync();
-          } else {
-            await sound.playAsync();
-          }
-          return;
-        } else {
-          // Unload the current sound before creating a new one
-          await sound.unloadAsync();
-        }
-      }
-    }
-
-    // Create and play the new sound
-    const { sound: newSound } = await Audio.Sound.createAsync(
-      { uri: filePath },
-      { progressUpdateIntervalMillis: 100 },
-      onPlaybackStatusUpdate
-    );
-    setSound(newSound);
-    setPlayingFile(filePath);
-    const status = await newSound.getStatusAsync();
-    if (status.isLoaded) {
-      setDuration(status.durationMillis ?? 0);
-    }
-    await newSound.playAsync();
-    setIsPlaying(true);
-  };
-
-  const onPlaybackStatusUpdate = (status: AVPlaybackStatus) => {
-    if (status.isLoaded) {
-      setPlaybackPosition(status.positionMillis);
-      setIsPlaying(status.isPlaying);
-      if (status.didJustFinish) {
-        stopRecording();
-      }
-    }
-  };
-
-  const stopRecording = async () => {
-    if (sound) {
-      await sound.stopAsync();
-      await sound.setPositionAsync(0);
-      setIsPlaying(false);
-      setPlaybackPosition(0);
-      setPlayingFile(null);
-    }
-  };
-
-  const seekRecording = async (value: number) => {
-    if (sound) {
-      await sound.setPositionAsync(value);
-      setPlaybackPosition(value);
-    }
-  };
-
-  useEffect(() => {
-    return sound
-      ? () => {
-          sound.unloadAsync();
-        }
-      : undefined;
-  }, [sound]);
-
-  const formatDate = (date: Date, format: string): string => {
-    const pad = (num: number) => num.toString().padStart(2, '0');
-    
-    return format.replace(/dd|MM|yyyy/g, (match) => {
-      switch (match) {
-        case 'dd': return pad(date.getDate());
-        case 'MM': return pad(date.getMonth() + 1);
-        case 'yyyy': return date.getFullYear().toString();
-        default: return match;
-      }
-    });
-  };
-
-  const formatDuration = (milliseconds: number) => {
-    const totalSeconds = Math.floor(milliseconds / 1000);
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-  };
-
-  const renderItem = ({ item }: { item: Recording }) => {
-    const isCurrentlyPlaying = playingFile === item.filePath;
-
-    return (
-      <View className="bg-white rounded-lg p-4 mb-2 ">
-        <View className="flex-row items-center">
-          <Pressable onPress={() => playRecording(item.filePath)} className="mr-4">
-            <Ionicons name={isCurrentlyPlaying && isPlaying ? "pause" : "play"} size={24} color="#007AFF" />
-          </Pressable>
-          <View className="flex-1">
-            <Text className="text-base font-semibold">{item.fileName}</Text>
-            <Text className="text-sm text-gray-500">
-              {formatDate(item.date, 'dd/MM/yyyy')} • {formatDuration(item.duration)}
-            </Text>
-          </View>
-          <Pressable onPress={() => shareRecording(item.filePath)} className="ml-2">
-            <Ionicons name="share-outline" size={24} color="gray" />
-          </Pressable>
-        </View>
-        <View className="w-full">
-          {isCurrentlyPlaying && (
-            <Slider
-              style={{ width: '100%', height: 40 }}
-              minimumValue={0}
-              maximumValue={duration}
-              value={playbackPosition}
-              onSlidingComplete={seekRecording}
-              minimumTrackTintColor="#007AFF"
-              maximumTrackTintColor="#000000"
-            />
-          )}
-        </View>
-      </View>
-      
-    );
-  };
+  const renderItem = useCallback(({ item }: { item: Recording }) => (
+    <RecordingItem
+      recording={item}
+      active={currentlyPlayingId === item.filePath}
+      onPlay={() => setCurrentlyPlayingId(item.filePath)}
+    />
+  ), [currentlyPlayingId]);
 
   const openFilterModal = (filterType: FilterType) => {
     setCurrentFilter(filterType);
@@ -293,6 +176,39 @@ export default function SavedRecordings() {
     </View>
   );
 
+  const toggleSortByDate = useCallback(() => {
+    setSortOrder(prevSort => {
+      switch (prevSort) {
+        case 'recent': return 'old';
+        case 'old': return 'recent';
+      }
+    });
+  }, []);
+
+  const sortedSections = useCallback(() => {
+    return [...sections].sort((a, b) => {
+      const dateA = new Date(a.title);
+      const dateB = new Date(b.title);
+
+      if (!isNaN(dateA.getTime()) && !isNaN(dateB.getTime())) {
+        // Both titles are valid dates, sort by date
+        return sortOrder === 'recent' 
+          ? dateB.getTime() - dateA.getTime()
+          : dateA.getTime() - dateB.getTime();
+      } else if (!isNaN(dateA.getTime())) {
+        // Only a is a date, it should come first
+        return sortOrder === 'recent' ? -1 : 1;
+      } else if (!isNaN(dateB.getTime())) {
+        // Only b is a date, it should come first
+        return sortOrder === 'recent' ? 1 : -1;
+      } else {
+        // Neither is a date, sort alphabetically
+        return sortOrder === 'recent'
+          ? a.title.localeCompare(b.title)
+          : b.title.localeCompare(a.title);
+      }
+    });
+  }, [sections, sortOrder]);
 
   return (
     <View className={`flex-1 p-4 bg-gray-100`}>
@@ -304,6 +220,13 @@ export default function SavedRecordings() {
           headerTitleAlign: 'center',
           headerRight: () => (
             <View className="flex-row items-center">
+              <Pressable onPress={toggleSortByDate} className="mr-4">
+                <Ionicons 
+                  name={sortOrder === 'recent' ? "arrow-down" : "arrow-up"} 
+                  size={24} 
+                  color="white" 
+                />
+              </Pressable>
               <Pressable onPress={() => router.push('/setup')}>
                 <Ionicons name="settings-outline" size={24} color="white" />
               </Pressable>
@@ -319,13 +242,17 @@ export default function SavedRecordings() {
         {selectedBook && renderFilterButton("bookmark", "chapter", selectedChapter)}
       </View>
 
-      {sections.length === 0 ? (
+      {isLoading ? (
         <View className="flex-1 justify-center items-center">
-          <Text className="text-center text-base text-gray-500">No recordings found</Text>
+          <ActivityIndicator size="large" color="#007AFF" />
+        </View>
+      ) : sortedSections().length === 0 ? (
+        <View className="flex-1 justify-center items-center">
+          <Ionicons name="mic-off-outline" size={64} color="#A0AEC0" />
         </View>
       ) : (
         <SectionList
-          sections={sections}
+          sections={sortedSections()}
           renderItem={renderItem}
           renderSectionHeader={({ section: { title } }) => (
             <Text className="p-2 rounded-t-lg mt-4">{title}</Text>

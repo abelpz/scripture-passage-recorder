@@ -212,7 +212,7 @@ export const RecordingProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       addRecording({
         filePath: `${folderPath}${uniqueFileName}`,
         fileName: uniqueFileName,
-        date: new Date(),
+        date: new Date().toISOString(),
         duration: 0 // You might want to get the actual duration here
       });
     } catch (error) {

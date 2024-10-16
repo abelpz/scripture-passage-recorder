@@ -1,11 +1,12 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import * as FileSystem from 'expo-file-system';
 import { Audio } from 'expo-av';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export type Recording = {
   filePath: string;
   fileName: string;
-  date: Date;
+  date: string; // Changed from Date to string
   duration: number;
 };
 
@@ -21,6 +22,7 @@ type RecordingsContextType = {
   chapters: string[];
   loadRecordings: (language?: string, book?: string, chapter?: string) => Promise<void>;
   addRecording: (recording: Recording) => void;
+  isLoading: boolean;
 };
 
 const RecordingsContext = createContext<RecordingsContextType | undefined>(undefined);
@@ -55,9 +57,9 @@ const listRecursive = async (dir: string): Promise<string[]> => {
   }
 };
 
-const formatDate = (date: Date, format: string): string => {
+const formatDate = (dateString: string, format: string): string => {
+  const date = new Date(dateString);
   const pad = (num: number) => num.toString().padStart(2, '0');
-  
   return format.replace(/dd|MM|yyyy/g, (match) => {
     switch (match) {
       case 'dd': return pad(date.getDate());
@@ -69,110 +71,163 @@ const formatDate = (date: Date, format: string): string => {
 };
 
 export const RecordingsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [sections, setSections] = useState<Section[]>([]);
+  const [allSections, setAllSections] = useState<Section[]>([]);
+  const [filteredSections, setFilteredSections] = useState<Section[]>([]);
   const [languages, setLanguages] = useState<string[]>([]);
   const [books, setBooks] = useState<string[]>([]);
   const [chapters, setChapters] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isInitialized, setIsInitialized] = useState(false);
 
-  const loadRecordings = async (language?: string, book?: string, chapter?: string) => {
+  useEffect(() => {
+    initializeData();
+  }, []);
+
+  const initializeData = async () => {
+    setIsLoading(true);
+    try {
+      const cachedData = await AsyncStorage.getItem('recordingsCache');
+      if (cachedData) {
+        const { sections: cachedSections, languages: cachedLanguages, books: cachedBooks, chapters: cachedChapters } = JSON.parse(cachedData);
+        setAllSections(cachedSections);
+        setFilteredSections(cachedSections);
+        setLanguages(cachedLanguages);
+        setBooks(cachedBooks);
+        setChapters(cachedChapters);
+      } else {
+        // If no cached data, load from file system
+        await loadFreshData();
+      }
+    } catch (error) {
+      console.error('Error initializing recordings data:', error);
+    } finally {
+      setIsLoading(false);
+      setIsInitialized(true);
+    }
+  };
+
+  const loadRecordings = useCallback(async (language?: string, book?: string, chapter?: string) => {
+    if (!isInitialized) {
+      console.log('Data not yet initialized, skipping loadRecordings');
+      return;
+    }
+    
+    // Filter sections based on the provided parameters
+    const filtered = allSections.map(section => ({
+      ...section,
+      data: section.data.filter(recording => {
+        const [recordingLang, recordingBook, recordingChapter] = recording.filePath.split('/').slice(-4, -1);
+        return (
+          (!language || recordingLang === language) &&
+          (!book || recordingBook === book) &&
+          (!chapter || recordingChapter === chapter)
+        );
+      })
+    })).filter(section => section.data.length > 0);
+
+    setFilteredSections(filtered);
+  }, [allSections, isInitialized]);
+
+  const loadFreshData = async () => {
+    console.log('Starting loadFreshData');
     const recordingsDir = `${FileSystem.documentDirectory}recordings/`;
     const allRecordings = await listRecursive(recordingsDir);
+    console.log('All recordings:', allRecordings);
     
-    // Filter recordings based on selected options
-    const filteredRecordings = allRecordings.filter(recording => {
-      const [lang, bk, ch] = recording.split('/').slice(-4, -1);
-      return (
-        (!language || lang === language) &&
-        (!book || bk === book) &&
-        (!chapter || ch === chapter)
-      );
+    const newRecordings = await Promise.all(allRecordings.map(processRecording));
+    console.log('Processed recordings:', newRecordings);
+    
+    const updatedSections = updateSections(newRecordings);
+    console.log('Updated sections:', updatedSections);
+
+    const { updatedLanguages, updatedBooks, updatedChapters } = updateOptions(allRecordings);
+    console.log('Updated options - languages:', updatedLanguages, 'books:', updatedBooks, 'chapters:', updatedChapters);
+
+    const cacheData = JSON.stringify({ 
+      sections: updatedSections, 
+      languages: updatedLanguages, 
+      books: updatedBooks, 
+      chapters: updatedChapters 
     });
+    console.log('Caching data:', cacheData);
+    try {
+      await AsyncStorage.setItem('recordingsCache', cacheData);
+      console.log('Data cached successfully');
+      
+      setAllSections(updatedSections);
+      setFilteredSections(updatedSections);
+      setLanguages(updatedLanguages);
+      setBooks(updatedBooks);
+      setChapters(updatedChapters);
+    } catch (error) {
+      console.error('Error caching recordings data:', error);
+    }
+  };
 
-    // Group recordings by date
-    const groupedRecordings: { [key: string]: Recording[] } = {};
-    for (const filePath of filteredRecordings) {
-      const fileInfo = await FileSystem.getInfoAsync(filePath);
-      const fileName = filePath.split('/').pop() || '';
-      const date = fileInfo.exists ? new Date(fileInfo.modificationTime * 1000) : new Date();
-      const dateKey = formatDate(date, 'dd/MM/yyyy');
-      const { sound } = await Audio.Sound.createAsync({ uri: filePath });
-      const status = await sound.getStatusAsync();
-      const duration = status.isLoaded ? status.durationMillis ?? 0 : 0;
-      await sound.unloadAsync();
+  const processRecording = async (filePath: string): Promise<Recording> => {
+    const fileInfo = await FileSystem.getInfoAsync(filePath);
+    const fileName = filePath.split('/').pop() || '';
+    const date = fileInfo.exists 
+      ? new Date(fileInfo.modificationTime * 1000).toISOString()
+      : new Date().toISOString();
+    const { sound } = await Audio.Sound.createAsync({ uri: filePath });
+    const status = await sound.getStatusAsync();
+    const duration = status.isLoaded ? status.durationMillis ?? 0 : 0;
+    await sound.unloadAsync();
+    return { filePath, fileName, date, duration };
+  };
 
-      if (!groupedRecordings[dateKey]) {
-        groupedRecordings[dateKey] = [];
+  const updateSections = (newRecordings: Recording[]): Section[] => {
+    const updatedSections = newRecordings.reduce((acc, recording) => {
+      const dateKey = formatDate(recording.date, 'dd/MM/yyyy');
+      const sectionIndex = acc.findIndex(section => section.title === dateKey);
+      if (sectionIndex !== -1) {
+        acc[sectionIndex].data.push(recording);
+      } else {
+        acc.push({ title: dateKey, data: [recording] });
       }
-      groupedRecordings[dateKey].push({ filePath, fileName, date, duration });
-    }
+      return acc;
+    }, [] as Section[]);
 
-    // Convert grouped recordings to sections
-    const newSections: Section[] = Object.entries(groupedRecordings).map(([date, recordings]) => ({
-      title: date,
-      data: recordings.sort((a, b) => b.date.getTime() - a.date.getTime()),
-    })).sort((a, b) => {
-      const [aDay, aMonth, aYear] = a.title.split('/').map(Number);
-      const [bDay, bMonth, bYear] = b.title.split('/').map(Number);
-      return new Date(bYear, bMonth - 1, bDay).getTime() - new Date(aYear, aMonth - 1, aDay).getTime();
-    });
+    return updatedSections.sort((a, b) => new Date(a.title).getTime() - new Date(b.title).getTime());
+  };
 
-    setSections(newSections);
+  const updateOptions = (allRecordings: string[]): { updatedLanguages: string[], updatedBooks: string[], updatedChapters: string[] } => {
+    console.log('Updating options with:', allRecordings);
+    const updatedLanguages = [...new Set(allRecordings.map(r => r.split('/').slice(-4, -3)[0]))];
+    const updatedBooks = [...new Set(allRecordings.map(r => r.split('/').slice(-3, -2)[0]))];
+    const updatedChapters = [...new Set(allRecordings.map(r => r.split('/').slice(-2, -1)[0]))];
 
-    // Update available options
-    const uniqueLanguages = [...new Set(allRecordings.map(r => r.split('/').slice(-4, -3)[0]))];
-    setLanguages(uniqueLanguages);
-
-    if (language) {
-      const uniqueBooks = [...new Set(allRecordings
-        .filter(r => r.includes(`/${language}/`))
-        .map(r => r.split('/').slice(-3, -2)[0])
-      )];
-      setBooks(uniqueBooks);
-    }
-
-    if (book) {
-      const uniqueChapters = [...new Set(allRecordings
-        .filter(r => r.includes(`/${language}/${book}/`))
-        .map(r => r.split('/').slice(-2, -1)[0])
-      )];
-      setChapters(uniqueChapters);
-    }
+    return { updatedLanguages, updatedBooks, updatedChapters };
   };
 
   const addRecording = (recording: Recording) => {
-    setSections(prevSections => {
-      const dateKey = formatDate(recording.date, 'dd/MM/yyyy');
-      const sectionIndex = prevSections.findIndex(section => section.title === dateKey);
+    setAllSections(prevSections => {
+      const newSections = updateSections([...prevSections.flatMap(s => s.data), recording]);
       
-      if (sectionIndex !== -1) {
-        // Add to existing section
-        const updatedSection = {
-          ...prevSections[sectionIndex],
-          data: [recording, ...prevSections[sectionIndex].data]
-        };
-        return [
-          ...prevSections.slice(0, sectionIndex),
-          updatedSection,
-          ...prevSections.slice(sectionIndex + 1)
-        ];
-      } else {
-        // Create new section
-        return [{
-          title: dateKey,
-          data: [recording]
-        }, ...prevSections];
-      }
+      // Update AsyncStorage in the background
+      AsyncStorage.setItem('recordingsCache', JSON.stringify({
+        sections: newSections,
+        languages,
+        books,
+        chapters
+      })).catch(error => console.error('Error updating AsyncStorage:', error));
+
+      // Update filtered sections
+      setFilteredSections(newSections);
+
+      return newSections;
     });
+
+    // Update languages, books, and chapters
+    const [lang, book, chapter] = recording.filePath.split('/').slice(-4, -1);
+    setLanguages(prev => Array.from(new Set([...prev, lang])));
+    setBooks(prev => Array.from(new Set([...prev, book])));
+    setChapters(prev => Array.from(new Set([...prev, chapter])));
   };
 
-  // Implement listRecursive and formatDate functions here...
-
-  useEffect(() => {
-    loadRecordings();
-  }, []);
-
   return (
-    <RecordingsContext.Provider value={{ sections, languages, books, chapters, loadRecordings, addRecording }}>
+    <RecordingsContext.Provider value={{ sections: filteredSections, languages, books, chapters, loadRecordings, addRecording, isLoading }}>
       {children}
     </RecordingsContext.Provider>
   );
