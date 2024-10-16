@@ -2,12 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList, Pressable, Alert, Modal, SectionList } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { Audio, AVPlaybackStatus } from 'expo-av';
 import Slider from '@react-native-community/slider';
 import { useSetupContext } from '../contexts/AppContext';
 import { styled } from 'nativewind';
+import { useRecordings, Recording } from '../contexts/RecordingsContext';
 
 const StyledIonicons = styled(Ionicons)
 
@@ -71,25 +71,10 @@ const FilterModal = ({ visible, onClose, options, onSelect, onClear, title }: {
   </Modal>
 );
 
-type Recording = {
-  filePath: string;
-  fileName: string;
-  date: Date;
-  duration: number;
-};
-
-type Section = {
-  title: string;
-  data: Recording[];
-};
-
 export default function SavedRecordings() {
-  const {state} = useSetupContext();
+  const { sections, languages, books, chapters, loadRecordings } = useRecordings();
+  const { state } = useSetupContext();
   const { selectedLanguage: contextLanguage } = state;
-  const [recordings, setRecordings] = useState<string[]>([]);
-  const [languages, setLanguages] = useState<string[]>([]);
-  const [books, setBooks] = useState<string[]>([]);
-  const [chapters, setChapters] = useState<string[]>([]);
   const [selectedLanguage, setSelectedLanguage] = useState<string>(contextLanguage?.lc || "");
   const [selectedBook, setSelectedBook] = useState<string>('');
   const [selectedChapter, setSelectedChapter] = useState<string>('');
@@ -101,107 +86,10 @@ export default function SavedRecordings() {
   const [duration, setDuration] = useState(0);
   const [playingFile, setPlayingFile] = useState<string | null>(null);
   const [playbackPosition, setPlaybackPosition] = useState(0);
-  const playbackUpdateInterval = React.useRef<NodeJS.Timeout | null>(null);
-  const [sections, setSections] = useState<Section[]>([]);
 
   useEffect(() => {
-    loadRecordings();
+    loadRecordings(selectedLanguage, selectedBook, selectedChapter);
   }, [selectedLanguage, selectedBook, selectedChapter]);
-
-  const loadRecordings = async () => {
-    const recordingsDir = `${FileSystem.documentDirectory}recordings/`;
-    const allRecordings = await listRecursive(recordingsDir);
-    
-    // Filter recordings based on selected options
-    const filteredRecordings = allRecordings.filter(recording => {
-      const [lang, book, chapter] = recording.split('/').slice(-4, -1);
-      return (
-        (!selectedLanguage || lang === selectedLanguage) &&
-        (!selectedBook || book === selectedBook) &&
-        (!selectedChapter || chapter === selectedChapter)
-      );
-    });
-
-    // Group recordings by date
-    const groupedRecordings: { [key: string]: Recording[] } = {};
-    for (const filePath of filteredRecordings) {
-      const fileInfo = await FileSystem.getInfoAsync(filePath);
-      const fileName = filePath.split('/').pop() || '';
-      const date = fileInfo.exists ? new Date(fileInfo.modificationTime * 1000) : new Date();
-      const dateKey = formatDate(date, 'dd/MM/yyyy');
-      const { sound } = await Audio.Sound.createAsync({ uri: filePath });
-      const status = await sound.getStatusAsync();
-      const duration = status.isLoaded ? status.durationMillis ?? 0 : 0;
-      await sound.unloadAsync();
-
-      if (!groupedRecordings[dateKey]) {
-        groupedRecordings[dateKey] = [];
-      }
-      groupedRecordings[dateKey].push({ filePath, fileName, date, duration });
-    }
-
-    // Convert grouped recordings to sections
-    const newSections: Section[] = Object.entries(groupedRecordings).map(([date, recordings]) => ({
-      title: date, // This is now in 'dd/MM/yyyy' format
-      data: recordings.sort((a, b) => b.date.getTime() - a.date.getTime()),
-    })).sort((a, b) => {
-      const [aDay, aMonth, aYear] = a.title.split('/').map(Number);
-      const [bDay, bMonth, bYear] = b.title.split('/').map(Number);
-      return new Date(bYear, bMonth - 1, bDay).getTime() - new Date(aYear, aMonth - 1, aDay).getTime();
-    });
-
-    setSections(newSections);
-
-    // Update available options
-    const uniqueLanguages = [...new Set(allRecordings.map(r => r.split('/').slice(-4, -3)[0]))];
-    setLanguages(uniqueLanguages);
-
-    if (selectedLanguage) {
-      const uniqueBooks = [...new Set(allRecordings
-        .filter(r => r.includes(`/${selectedLanguage}/`))
-        .map(r => r.split('/').slice(-3, -2)[0])
-      )];
-      setBooks(uniqueBooks);
-    }
-
-    if (selectedBook) {
-      const uniqueChapters = [...new Set(allRecordings
-        .filter(r => r.includes(`/${selectedLanguage}/${selectedBook}/`))
-        .map(r => r.split('/').slice(-2, -1)[0])
-      )];
-      setChapters(uniqueChapters);
-    }
-  };
-
-  const listRecursive = async (dir: string): Promise<string[]> => {
-    try {
-      const dirExists = await FileSystem.getInfoAsync(dir);
-      if (!dirExists.exists || !dirExists.isDirectory) {
-        console.warn(`Directory does not exist: ${dir}`);
-        return [];
-      }
-
-      const files = await FileSystem.readDirectoryAsync(dir);
-      let recordings: string[] = [];
-      for (const file of files) {
-        const filePath = `${dir}${file}`;
-        const info = await FileSystem.getInfoAsync(filePath);
-        if (info.exists) {
-          if (info.isDirectory) {
-            recordings = [...recordings, ...(await listRecursive(`${filePath}/`))];
-          } else if (file.endsWith('.m4a')) {
-            recordings.push(filePath);
-          }
-        } else {
-          console.warn(`File or directory does not exist: ${filePath}`);
-        }
-      }
-      return recordings;
-    } catch (error) {
-      console.error('Error listing files:', error);
-      return [];
-    }
-  };
 
   const shareRecording = async (filePath: string) => {
     try {
@@ -259,13 +147,6 @@ export default function SavedRecordings() {
       if (status.didJustFinish) {
         stopRecording();
       }
-    }
-  };
-
-  const pauseRecording = async () => {
-    if (sound) {
-      await sound.pauseAsync();
-      setIsPlaying(false);
     }
   };
 

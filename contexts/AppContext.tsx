@@ -2,6 +2,7 @@ import React, { createContext, useContext, useReducer, Dispatch } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useCallback, useMemo } from 'react';
 import { versifications } from '../constants/versifications';
+import { RecordingsProvider } from './RecordingsContext';
 
 interface Language {
   ln: string;
@@ -227,7 +228,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   return (
     <SetupProvider>
       <ReferenceProvider>
-        {children}
+        <RecordingsProvider>
+          {children}
+        </RecordingsProvider>
       </ReferenceProvider>
     </SetupProvider>
   );

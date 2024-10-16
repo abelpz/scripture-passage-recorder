@@ -4,6 +4,7 @@ import { Audio, AVPlaybackStatus } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useReferenceContext } from './AppContext';
+import { useRecordings } from './RecordingsContext';
 
 export type RecordingStatus = 'idle' | 'recording' | 'playing' | 'paused' | 'stopped';
 
@@ -25,6 +26,7 @@ const RecordingContext = createContext<RecordingContextType | undefined>(undefin
 
 export const RecordingProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { state: { selectedBook, selectedChapter, verseRange } } = useReferenceContext();
+  const { addRecording } = useRecordings();
 
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [sound, setSound] = useState<Audio.Sound | null>(null);
@@ -205,6 +207,14 @@ export const RecordingProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (onSave) {
         onSave();
       }
+
+      // After saving the file, add it to the RecordingsContext
+      addRecording({
+        filePath: `${folderPath}${uniqueFileName}`,
+        fileName: uniqueFileName,
+        date: new Date(),
+        duration: 0 // You might want to get the actual duration here
+      });
     } catch (error) {
       console.error('Error saving recording:', error);
       Alert.alert('Error', 'Failed to save the recording');
