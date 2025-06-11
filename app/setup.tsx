@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { View, Text, TextInput, FlatList, TouchableOpacity, Alert, KeyboardAvoidingView, Platform, Keyboard } from 'react-native';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { View, Text, TextInput, FlatList, TouchableOpacity, Alert, KeyboardAvoidingView, Platform, Keyboard, ActivityIndicator } from 'react-native';
 
 import {styled} from "nativewind"
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -10,6 +10,32 @@ import { useRouter } from 'expo-router';
 
 const StyledIonicons = styled(Ionicons);
 
+const SearchBar = React.memo(({ setSearch }: { setSearch: (text: string) => void }) => {
+  const [localSearch, setLocalSearch] = useState('');
+  const searchInputRef = useRef<TextInput>(null);
+
+  const handleSearchChange = useCallback((text: string) => {
+    setLocalSearch(text);
+    setSearch(text);
+  }, []);
+
+  return (
+    <View className="flex-row items-center mb-4">
+      <MaterialCommunityIcons name="translate" size={24} color="black" />
+      <View className="flex-1 ml-2 flex-row items-center border border-gray-300 rounded-md p-2">
+        <Ionicons name="search" size={24} color="gray" />
+        <TextInput
+          ref={searchInputRef}
+          className="flex-1 ml-2"
+          placeholder="Search languages"
+          value={localSearch}
+          onChangeText={handleSearchChange}
+        />
+      </View>
+    </View>
+  );
+});
+
 export default function Setup() {
   const { state: setupState, setLanguage, setVersification, setVersificationSchema, checkSetupComplete } = useSetupContext();
   const { checkSelectionComplete } = useReferenceContext();
@@ -17,24 +43,27 @@ export default function Setup() {
   const [loading, setLoading] = useState(true);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const router = useRouter();
-
   const [languages, setLanguages] = useState<Language[]>([]);
 
   useEffect(() => {
-    const loadLanguages = async () => {
-      setLoading(true);
-      const loadedLanguages = await getLanguages();
-      setLanguages(loadedLanguages);
-      setLoading(false);
-    };
-    loadLanguages();
-  }, []);
+    if (search.length >= 2) {
+      const loadLanguages = async () => {
+        const loadedLanguages = getLanguages();
+        setLanguages(loadedLanguages);
+      };
+      loadLanguages();
+    } else {
+      setLanguages([]);
+    }
+  }, [search]);
 
   const memoizedFilteredLanguages = useMemo(() => {
-    if (!search || search.length <= 1) return languages;
+    if (search.length < 2) {
+      return [];
+    }
     
     const lowerSearchTerm = search.toLowerCase();
-    return languages
+    const filteredLanguages = languages
       .filter(lang =>
         lang.ln.toLowerCase().includes(lowerSearchTerm) ||
         lang.lc.toLowerCase().includes(lowerSearchTerm)
@@ -52,7 +81,9 @@ export default function Setup() {
 
         return a.ln.localeCompare(b.ln);
       });
+    return filteredLanguages;
   }, [languages, search]);
+
 
   useEffect(() => {
     loadSavedSettings();
@@ -153,10 +184,21 @@ export default function Setup() {
     </TouchableOpacity>
   ), []);
 
+  const MemoizedFlatList = useMemo(() => (
+    <FlatList
+      data={memoizedFilteredLanguages}
+      keyExtractor={(item) => item.lc}
+      renderItem={renderLanguageItem}
+      initialNumToRender={20}
+      maxToRenderPerBatch={20}
+      windowSize={21}
+    />
+  ), [memoizedFilteredLanguages, renderLanguageItem]);
+
   if (loading) {
     return (
       <View className="flex-1 justify-center items-center">
-        <Text>Loading...</Text>
+        <ActivityIndicator size="large" color="#0000ff" />
       </View>
     );
   }
@@ -165,70 +207,57 @@ export default function Setup() {
     <KeyboardAvoidingView 
       behavior={Platform.OS === "ios" ? "padding" : "height"}
       className="flex-1"
+      keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
     >
       <View className="flex-1 p-4 py-14 bg-white">
-        <View className="flex-row items-center mb-4">
-          <MaterialCommunityIcons name="translate" size={24} color="black" />
-          <View className="flex-1 ml-2 flex-row items-center border border-gray-300 rounded-md p-2">
-            <Ionicons name="search" size={24} color="gray" />
-            <TextInput
-              className="flex-1 ml-2"
-              placeholder="Search languages"
-              value={search}
-              onChangeText={setSearch}
-            />
-          </View>
-        </View>
+        <SearchBar setSearch={setSearch} />
         
-        {setupState.selectedLanguage && (
-          <TouchableOpacity
-            className="py-2 px-4  mb-2 border-b border-gray-200 flex-row items-center bg-blue-100"
-          >
-            <View className="flex-1 flex-row items-center">
-              <Text className="text-base">{setupState.selectedLanguage.ln}</Text>
-              <Text className="ml-2 text-sm text-gray-500">({setupState.selectedLanguage.lc})</Text>
-            </View>
-            <StyledIonicons name="checkmark-circle" size={24} className="text-blue-500"/>
-          </TouchableOpacity>
-        )}
-
-        <FlatList
-          data={memoizedFilteredLanguages}
-          keyExtractor={(item) => item.lc}
-          renderItem={renderLanguageItem}
-          initialNumToRender={20}
-          maxToRenderPerBatch={20}
-          windowSize={21}
-        />
-
-        {!keyboardVisible && (
+        {(
           <>
-            <View className="mt-8">
-              <View className="flex-row items-center mb-2">
-                <MaterialCommunityIcons name="book-open-variant" size={24} color="black" />
-                <Text className="text-lg font-semibold ml-2">Versification</Text>
-              </View>
-              {predefinedSchemas.map((schema) => (
+            {setupState.selectedLanguage && (
+              <TouchableOpacity
+                className="py-2 px-4  mb-2 border-b border-gray-200 flex-row items-center bg-blue-100"
+              >
+                <View className="flex-1 flex-row items-center">
+                  <Text className="text-base">{setupState.selectedLanguage.ln}</Text>
+                  <Text className="ml-2 text-sm text-gray-500">({setupState.selectedLanguage.lc})</Text>
+                </View>
+                <StyledIonicons name="checkmark-circle" size={24} className="text-blue-500"/>
+              </TouchableOpacity>
+            )}
+
+            {MemoizedFlatList}
+
+            {!keyboardVisible && (
+              <>
+                <View className="mt-8">
+                  <View className="flex-row items-center mb-2">
+                    <MaterialCommunityIcons name="book-open-variant" size={24} color="black" />
+                    <Text className="text-lg font-semibold ml-2">Versification</Text>
+                  </View>
+                  {predefinedSchemas.map((schema) => (
+                    <TouchableOpacity
+                      key={schema.file}
+                      className={`py-2 px-4 border-b border-gray-200 flex-row items-center ${setupState.selectedVersification === schema.file ? 'bg-blue-100' : ''}`}
+                      onPress={() => handleVersificationSelect(schema.file)}
+                    >
+                      <Text className="flex-1">{schema.name}</Text>
+                      {setupState.selectedVersification === schema.file ? (
+                        <StyledIonicons name="radio-button-on" size={24} className="text-blue-500" />
+                      ) : (
+                        <StyledIonicons name="radio-button-off" size={24} className="text-gray-500" />
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </View>
                 <TouchableOpacity
-                  key={schema.file}
-                  className={`py-2 px-4 border-b border-gray-200 flex-row items-center ${setupState.selectedVersification === schema.file ? 'bg-blue-100' : ''}`}
-                  onPress={() => handleVersificationSelect(schema.file)}
+                  className="mt-8 bg-blue-500 p-4 rounded-full self-center flex-row items-center"
+                  onPress={continueToNextScreen}
                 >
-                  <Text className="flex-1">{schema.name}</Text>
-                  {setupState.selectedVersification === schema.file ? (
-                    <StyledIonicons name="radio-button-on" size={24} className="text-blue-500" />
-                  ) : (
-                    <StyledIonicons name="radio-button-off" size={24} className="text-gray-500" />
-                  )}
+                  <Ionicons name="arrow-forward" size={24} color="white" />
                 </TouchableOpacity>
-              ))}
-            </View>
-            <TouchableOpacity
-              className="mt-8 bg-blue-500 p-4 rounded-full self-center flex-row items-center"
-              onPress={continueToNextScreen}
-            >
-              <Ionicons name="arrow-forward" size={24} color="white" />
-            </TouchableOpacity>
+              </>
+            )}
           </>
         )}
       </View>
