@@ -26,13 +26,21 @@ export const useRecordingLevels = (recording: Audio.Recording | null, updateInte
     const NOISE_GATE = -50;
     recordingStartTime.current = Date.now();
 
+    const MIN_METERING = -160;
+    const MAX_METERING = 0;
+    const POWER_EXPONENT = 2;
+
     const updateLevels = async () => {
       const status = await recording.getStatusAsync();
       if (status.isRecording) {
-        const { metering = -160 } = status;
+        const { metering = MIN_METERING } = status;
 
+        // Normalize and apply power function in one step
+        const normalizedMetering = Math.pow(
+          Math.max(0, (metering - MIN_METERING) / (MAX_METERING - MIN_METERING)),
+          POWER_EXPONENT
+        );
 
-        let normalizedMetering = Math.max(SILENCE_HEIGHT, Math.min(1, (metering + 160) / 160));
         lastLevel.current = normalizedMetering;
 
         levelBuffer.current.push({ 

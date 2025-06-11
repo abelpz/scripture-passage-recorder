@@ -1,4 +1,4 @@
-import gatewayLanguages from './gatewaylanguages.json';
+import languages from './languages.json';
 
 export interface Language {
   ln: string;
@@ -7,14 +7,14 @@ export interface Language {
 
 let cachedLanguages: Language[] = [];
 
-export async function getLanguages(): Promise<Language[]> {
+export function getLanguages() {
   if (cachedLanguages.length > 0) {
     return cachedLanguages;
   }
 
   try {
     // Directly use the imported JSON
-    cachedLanguages = gatewayLanguages as Language[];
+    cachedLanguages = languages as Language[];
     return cachedLanguages;
   } catch (error) {
     console.error('Error loading languages:', error);

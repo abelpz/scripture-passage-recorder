@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, FlatList, ActivityIndicator, ScrollView } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { View, Text, TouchableOpacity, FlatList, ActivityIndicator, ScrollView, Dimensions, Animated } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useReferenceContext, useSetupContext } from '../../contexts/AppContext';
@@ -7,6 +7,59 @@ import { Alert } from 'react-native';
 import { styled } from 'nativewind';
 
 const StyledIonicons = styled(Ionicons)
+
+const VerseGrid = ({book, chapter, verseRange, versificationSchema, screen, ITEMS_PER_ROW, ITEM_WIDTH, ITEM_HEIGHT, MARGIN, onSelect}: {book: string | null, chapter: number | null, verseRange: [number, number] | null, versificationSchema: any, screen: 'book' | 'chapter' | 'verse', ITEMS_PER_ROW: number, ITEM_WIDTH: number, ITEM_HEIGHT: number, MARGIN: number, onSelect: (verse: number) => void}) => {
+    if (!book || !chapter || !versificationSchema) return null;
+    const verses = versificationSchema.maxVerses[book][chapter - 1];
+
+    // Create a ref to store the ScrollView
+    const scrollViewRef = useRef<ScrollView>(null);
+
+    // Use useEffect to scroll when the screen changes to 'verse'
+    useEffect(() => {
+      if (screen === 'verse' && scrollViewRef.current && verseRange) {
+        const rowIndex = Math.floor((verseRange[0] - 1) / ITEMS_PER_ROW);
+        scrollViewRef.current.scrollTo({ y: rowIndex * (ITEM_HEIGHT + MARGIN), animated: false });
+      }
+    }, [screen]);
+
+    return (
+      <ScrollView
+        ref={scrollViewRef}
+        contentContainerStyle={{ 
+          flexDirection: 'row', 
+          flexWrap: 'wrap', 
+          justifyContent: 'center',
+          padding: MARGIN / 2,
+          paddingBottom: 20
+        }}
+      >
+        {[...Array(verses)].map((_, index) => {
+          const verseNumber = index + 1;
+          const isSelected = verseRange && 
+            verseNumber >= verseRange[0] && 
+            verseNumber <= verseRange[1];
+          return (
+            <TouchableOpacity
+              key={verseNumber}
+              style={{
+                width: ITEM_WIDTH,
+                height: ITEM_HEIGHT,
+                margin: MARGIN / 2,
+                justifyContent: 'center',
+                alignItems: 'center',
+              }}
+              className={`${isSelected ? 'bg-blue-500' : 'bg-gray-200'} rounded-lg shadow`}
+              onPress={() => onSelect(verseNumber)}
+            >
+              <Text className={`text-lg font-semibold ${isSelected ? 'text-white' : 'text-black'}`}>{verseNumber}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+    );
+  };
+
 
 export default function ReferenceNavigation({onCancel}: {onCancel: () => void}) {
   const {state: { selectedBook, selectedChapter, verseRange }, setSelectedBook, setSelectedChapter, setVerseRange} = useReferenceContext()
@@ -17,6 +70,14 @@ export default function ReferenceNavigation({onCancel}: {onCancel: () => void}) 
   const [localChapter, setLocalChapter] = useState<number | null>(null);
   const [localVerseRange, setLocalVerseRange] = useState<[number, number] | null>(null);
   const router = useRouter();
+
+  const screenWidth = Dimensions.get('window').width;
+  const MARGIN = 8; // 4 points on each side
+  const ITEMS_PER_ROW = Math.floor(screenWidth / 75); // Assuming we want each item to be about 75 points wide including margin
+  const ITEM_WIDTH = (screenWidth - (ITEMS_PER_ROW + 1) * MARGIN) / ITEMS_PER_ROW;
+  const ITEM_HEIGHT = ITEM_WIDTH; // Making the height equal to the width for square buttons
+
+  const [slideAnim] = useState(new Animated.Value(0));
 
   useEffect(() => {
     if (selectedBook) {
@@ -133,10 +194,17 @@ export default function ReferenceNavigation({onCancel}: {onCancel: () => void}) 
     const chapters = versificationSchema.maxVerses[localBook];
     return (
       <ScrollView
-        contentContainerStyle={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', padding: 8 }}
+        contentContainerStyle={{ 
+          flexDirection: 'row', 
+          flexWrap: 'wrap', 
+          justifyContent: 'center',
+          padding: MARGIN / 2,
+          paddingBottom: 20
+        }}
         ref={(scrollView) => {
           if (scrollView && localChapter) {
-            scrollView.scrollTo({ y: Math.floor((localChapter - 1) / 4) * 72, animated: true });
+            const rowIndex = Math.floor((localChapter - 1) / ITEMS_PER_ROW);
+            scrollView.scrollTo({ y: rowIndex * (ITEM_HEIGHT + MARGIN), animated: true });
           }
         }}
       >
@@ -146,7 +214,14 @@ export default function ReferenceNavigation({onCancel}: {onCancel: () => void}) 
           return (
             <TouchableOpacity
               key={chapterNumber}
-              className={`w-16 h-16 m-1 ${isSelected ? 'bg-blue-500' : 'bg-white'} rounded-lg justify-center items-center shadow`}
+              style={{
+                width: ITEM_WIDTH,
+                height: ITEM_HEIGHT,
+                margin: MARGIN / 2,
+                justifyContent: 'center',
+                alignItems: 'center',
+              }}
+              className={`${isSelected ? 'bg-blue-500' : 'bg-white'} rounded-lg shadow`}
               onPress={() => handleChapterSelection(chapterNumber)}
             >
               <Text className={`text-lg font-semibold ${isSelected ? 'text-white' : 'text-black'}`}>{chapterNumber}</Text>
@@ -157,48 +232,35 @@ export default function ReferenceNavigation({onCancel}: {onCancel: () => void}) 
     );
   };
 
-  const renderVerseGrid = () => {
-    if (!localBook || !localChapter || !versificationSchema) return null;
-    const verses = versificationSchema.maxVerses[localBook][localChapter - 1];
-    return (
-      <ScrollView
-        contentContainerStyle={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', padding: 8 }}
-        ref={(scrollView) => {
-          if (scrollView && localVerseRange) {
-            scrollView.scrollTo({ y: Math.floor((localVerseRange[0] - 1) / 4) * 72, animated: false });
-          }
-        }}
-      >
-        {[...Array(verses)].map((_, index) => {
-          const verseNumber = index + 1;
-          const isSelected = localVerseRange && 
-            verseNumber >= localVerseRange[0] && 
-            verseNumber <= localVerseRange[1];
-          return (
-            <TouchableOpacity
-              key={verseNumber}
-              className={`w-16 h-16 m-1 ${isSelected ? 'bg-blue-500' : 'bg-gray-200'} rounded-lg justify-center items-center shadow`}
-              onPress={() => handleVerseSelection(verseNumber)}
-            >
-              <Text className={`text-lg font-semibold ${isSelected ? 'text-white' : 'text-black'}`}>{verseNumber}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
-    );
-  };
+  useEffect(() => {
+    slideAnim.setValue(1);
+    Animated.timing(slideAnim, {
+      toValue: 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+  }, [screen]);
 
   const renderContent = () => {
-    switch (screen) {
-      case 'book':
-        return renderBookList();
-      case 'chapter':
-        return renderChapterGrid();
-      case 'verse':
-        return renderVerseGrid();
-      default:
-        return null;
-    }
+    const slideInterpolate = slideAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0, screenWidth], // Slide from screen width to 0
+    });
+
+    return (
+      (() => {
+          switch (screen) {
+            case 'book':
+              return renderBookList();
+            case 'chapter':
+              return renderChapterGrid();
+            case 'verse':
+              return <VerseGrid book={localBook} chapter={localChapter} verseRange={localVerseRange} versificationSchema={versificationSchema} screen={screen} ITEMS_PER_ROW={ITEMS_PER_ROW} ITEM_WIDTH={ITEM_WIDTH} ITEM_HEIGHT={ITEM_HEIGHT} MARGIN={MARGIN} onSelect={handleVerseSelection} />;
+            default:
+              return null;
+          }
+        })()
+    );
   };
 
   if (!versificationSchema) {

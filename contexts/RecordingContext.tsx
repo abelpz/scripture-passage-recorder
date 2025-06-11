@@ -175,9 +175,26 @@ export const RecordingProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (!languageJson) {
       return;
     }
+
     const language = JSON.parse(languageJson);
     const fileName = `${language.lc}_${selectedBook}_${selectedChapter}_${verseRange ? (verseRange[0] === verseRange[1] ? verseRange[0] : `${verseRange[0]}-${verseRange[1]}`) : ''}.m4a`;
     const folderPath = `${FileSystem.documentDirectory}recordings/${language.lc}/${selectedBook}/${selectedChapter}/`;
+
+    const dirPermissions = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+
+    console.log('Directory permissions:', dirPermissions);
+
+    if (!dirPermissions.granted) {
+      console.log('No permission to access directory');
+      return;
+    }
+
+    const folderUri = await FileSystem.StorageAccessFramework.makeDirectoryAsync(dirPermissions.directoryUri, "passage-recordings");
+
+    const uri = FileSystem.StorageAccessFramework.getUriForDirectoryInRoot(folderUri)
+
+    console.log('Folder URI:', folderUri);
+    console.log('URI:', uri);
 
     console.log('Saving recording to:', `${folderPath}${fileName}`);
 

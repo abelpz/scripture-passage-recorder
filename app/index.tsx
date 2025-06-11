@@ -2,6 +2,8 @@ import { useEffect, useState, useCallback } from 'react';
 import { Href, Redirect } from 'expo-router';
 import { View, ActivityIndicator } from 'react-native';
 import { useReferenceContext, useSetupContext } from '../contexts/AppContext';
+import * as FileSystem from 'expo-file-system';
+
 
 export default function Index() {
   const [redirectTo, setRedirectTo] = useState<Href | null>(null);
@@ -31,6 +33,19 @@ export default function Index() {
       setRedirectTo(checkSetupAndSelection());
     }
   }, [setupLoadComplete, referenceLoadComplete, checkSetupAndSelection]);
+
+  useEffect(() => {
+    const logBundleDirectoryContents = async () => {
+      try {
+        const contents = await FileSystem.readDirectoryAsync(FileSystem.documentDirectory!);
+        console.log('Bundle directory contents:', contents);
+      } catch (error) {
+        console.error('Error reading bundle directory:', error);
+      }
+    };
+
+    logBundleDirectoryContents();
+  }, []);
 
   if (!setupLoadComplete || !referenceLoadComplete) {
     return (
